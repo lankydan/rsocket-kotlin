@@ -1,0 +1,4 @@
+rootProject.name = 'rsocket-kotlin-services'
+
+include 'backend-service'
+include 'inbound-service'
