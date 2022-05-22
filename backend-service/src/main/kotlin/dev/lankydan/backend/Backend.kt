@@ -18,8 +18,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onCompletion
@@ -45,71 +44,57 @@ fun main() {
 // seems like this doesn't cancel properly, since after shutting down the inbound application, the backend app threw a connection error
 // other people experiencing the same error (due to logging?) - https://github.com/rsocket/rsocket-kotlin/issues/211
 // cancelling the [coroutineContext] manually fixes the error
-fun Routing.requestSteam() {
+private fun Routing.requestSteam() {
     rSocket("requestStream") { // configure route 'localhost:9000/rsocket'
         RSocketRequestHandler { // create simple request handler
             requestStream { request: Payload -> // register request/stream handler
-                log.info("Received request (stream): ${request.data.readText()}")
+
+                val prefix = request.data.readText()
+
+                log.info("Received request (stream): $prefix")
+
                 flow {
-                    try {
-                        var i = 0
-                        while (true) {
-                            log.info("Emitting $i")
-                            emitOrClose(buildPayload { data("data: $i") })
-                            i += 1
-                            delay(200)
-                        }
-                    } catch (e: Exception) {
-                        log.info("Cancellation error?", e)
-                    } finally {
-                        log.info("Broken out of while loop")
+                    emitDataContinuously(prefix)
+                }.onCompletion { throwable ->
+                    if (throwable is CancellationException) {
+                        log.info("Connection terminated")
+                        currentCoroutineContext().cancel()
                     }
-                }/*.cancellable()*/.onCompletion {
-                    log.info("Completed", it)
-                    currentCoroutineContext().cancel()
-//                    coroutineContext.cancel()
                 }
             }
         }
     }
 }
 
-fun Routing.requestChannel() {
+private fun Routing.requestChannel() {
     rSocket("requestChannel") { // configure route 'localhost:9000/rsocket'
         RSocketRequestHandler { // create simple request handler
             requestChannel { request: Payload, payloads: Flow<Payload> ->
+
                 var prefix = request.data.readText()
-                log.info("Received request: '$prefix'")
+
+                log.info("Received request (channel): '$prefix'")
+
                 payloads.onEach { payload ->
                     prefix = payload.data.readText()
                     log.info("Received extra payload, changed emitted values to include prefix: '$prefix")
-                }.launchIn(this)
+                }.launchIn(this) // `launchIn` is needed to start the flow in a new coroutine (basically a new thread) so that it does not
+                // block the rest of the code, like it would if `collect` was called
+
                 flow {
-//                channelFlow<Payload> {
-                    try {
-                        var i = 0
-                        while (true) {
-                            val data = "data: ${if (prefix.isBlank()) "" else "($prefix) "}$i"
-                            log.info("Emitting $data")
-                            emitOrClose(buildPayload { data(data) })
-                            i += 1
-                            delay(200)
-                        }
-                    } catch (e: Exception) {
-                        log.info("Cancellation error?", e)
-                    } finally {
-                        log.info("Broken out of while loop")
+                    emitDataContinuously(prefix)
+                }.onCompletion { throwable ->
+                    if (throwable is CancellationException) {
+                        log.info("Connection terminated")
+                        currentCoroutineContext().cancel()
                     }
-                }.onCompletion {
-                    log.info("Completed", it)
-                    currentCoroutineContext().cancel()
                 }
             }
         }
     }
 }
 
-fun Routing.requestResponse() {
+private fun Routing.requestResponse() {
     rSocket("requestResponse") {
         RSocketRequestHandler {
             requestResponse { request: Payload ->
@@ -122,7 +107,7 @@ fun Routing.requestResponse() {
     }
 }
 
-fun Routing.fireAndForget() {
+private fun Routing.fireAndForget() {
     rSocket("fireAndForget") {
         RSocketRequestHandler {
             fireAndForget { request: Payload ->
@@ -130,5 +115,16 @@ fun Routing.fireAndForget() {
                 log.info("Received request (fire and forget): '$text' ")
             }
         }
+    }
+}
+
+private suspend fun FlowCollector<Payload>.emitDataContinuously(prefix: String) {
+    var i = 0
+    while (true) {
+        val data = "data: ${if (prefix.isBlank()) "" else "($prefix) "}$i"
+        log.info("Emitting $data")
+        emitOrClose(buildPayload { data(data) })
+        i += 1
+        delay(200)
     }
 }

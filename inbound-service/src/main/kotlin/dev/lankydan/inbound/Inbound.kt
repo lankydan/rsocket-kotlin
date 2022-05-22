@@ -24,7 +24,6 @@ import io.rsocket.kotlin.payload.data
 import io.rsocket.kotlin.transport.ktor.client.RSocketSupport
 import io.rsocket.kotlin.transport.ktor.client.rSocket
 import kotlinx.coroutines.InternalCoroutinesApi
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
@@ -78,8 +77,7 @@ fun Routing.requestStream(client: HttpClient) {
         }.launchIn(this) // `launchIn` is needed to start the flow in a new coroutine (basically a new thread) so that it does not
         // block the rest of the code, like it would if `collect` was called
         stream.onCompletion {
-            log.info("Completed", it)
-//            rSocket.cancel("Client called 'stop'")
+            log.info("Connection terminated")
         }.collect { payload: Payload ->
             val data = payload.data.readText()
             log.info("Received payload: '$data'")
@@ -107,7 +105,9 @@ fun Routing.requestChannel(client: HttpClient) {
 
         val stream: Flow<Payload> = rSocket.requestChannel(buildPayload { data("Hello") }, payloads)
 
-        stream.onCompletion { log.info("Completed") }.collect { payload: Payload ->
+        stream.onCompletion {
+            log.info("Connection terminated")
+        }.collect { payload: Payload ->
             val data = payload.data.readText()
             log.info("Received payload: '$data'")
             delay(500)
