@@ -52,6 +52,7 @@ fun main() {
             requestStream(client)
             requestChannel(client)
             requestResponse(client)
+            fireAndForget(client)
         }
     }.start(wait = true)
 }
@@ -124,5 +125,16 @@ fun Routing.requestResponse(client: HttpClient) {
         log.info("Received response from backend: '$text'")
 
         call.respondText { text }
+    }
+}
+
+fun Routing.fireAndForget(client: HttpClient) {
+    get("fireAndForget") {
+        val rSocket: RSocket = client.rSocket(path = "fireAndForget", port = 9000) // request stream
+        rSocket.fireAndForget(buildPayload { data("Hello") })
+
+        log.info("Completed fire and forget request")
+
+        call.respondText { "Completed" }
     }
 }

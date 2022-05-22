@@ -37,6 +37,7 @@ fun main() {
             requestSteam()
             requestChannel()
             requestResponse()
+            fireAndForget()
         }
     }.start(wait = true)
 }
@@ -116,6 +117,17 @@ fun Routing.requestResponse() {
                 log.info("Received request (request/response): '$text' ")
                 delay(200)
                 buildPayload { data("Received: '$text' - Returning: 'some data'") }
+            }
+        }
+    }
+}
+
+fun Routing.fireAndForget() {
+    rSocket("fireAndForget") {
+        RSocketRequestHandler {
+            fireAndForget { request: Payload ->
+                val text = request.data.readText()
+                log.info("Received request (fire and forget): '$text' ")
             }
         }
     }
