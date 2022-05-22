@@ -1,5 +1,6 @@
 package dev.lankydan.inbound
 
+import io.ktor.application.call
 import io.ktor.application.install
 import io.ktor.client.HttpClient
 import io.ktor.client.features.websocket.WebSockets
@@ -8,6 +9,9 @@ import io.ktor.http.cio.websocket.Frame
 import io.ktor.http.cio.websocket.close
 import io.ktor.http.cio.websocket.readText
 import io.ktor.http.cio.websocket.send
+import io.ktor.response.respondText
+import io.ktor.routing.Routing
+import io.ktor.routing.get
 import io.ktor.routing.routing
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -24,14 +28,17 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.transform
+import org.slf4j.LoggerFactory
+
+private val log = LoggerFactory.getLogger("Inbound")
 
 @InternalCoroutinesApi
-suspend fun main() {
+fun main() {
 
     val client = HttpClient { //create and configure ktor client
         // imports are annoying since there many classes/functions with the same names and different packages
@@ -39,80 +46,83 @@ suspend fun main() {
         install(RSocketSupport)
     }
 
-//    val rSocket: RSocket = client.rSocket(path = "ping", port = 9000) // request stream
-//    val stream: Flow<Payload> = rSocket.requestStream(buildPayload { data("Hello") }) // collect stream
-//    stream.collect { payload: Payload ->
-//        println("Received payload: '${payload.data.readText()}'")
-//    }
-
     embeddedServer(Netty, port = 8000) { // create and configure ktor server and start it on localhost:9000
         install(io.ktor.websocket.WebSockets)
         routing {
-            webSocket("ping") { // configure route 'localhost:9000/rsocket'
-                val rSocket: RSocket = client.rSocket(path = "ping", port = 9000) // request stream
-                val stream: Flow<Payload> = rSocket.requestStream(buildPayload { data("Hello") }) // collect stream
-                // Seems to apply back pressure when used in conjunction with the rsocket receiving it
-                // Disconnecting the websocket also terminates the rsocket port and therefore stops the backend
-                // from emitting data
-                incoming.receiveAsFlow().onEach { frame ->
-                    println("Received frame: $frame")
-                    if (frame is Frame.Text && frame.readText() == "stop") {
-                        println("Stop requested, cancelling socket")
-                        // DO NOT CALL CANCEL ON THE RSOCKET OR IT WILL NOT ACTUALLY CANCEL THE OTHER SIDE OF THE SOCKET
-                        // it sends a close/cancel event when the web socket itself is closed
-                        // [DefaultWebSocketSessionImpl.runOutgoingProcessor] cancels all coroutines created within the [webSocket] scope
-                        // this includes the stream returned by [requestStream]
-                        // the flow returned from [requestStream] will then send a close if it is cancelled to the other side of the socket
-//                        rSocket.cancel()
-//                        stream.cancellable()
-                        close(CloseReason(CloseReason.Codes.NORMAL, "Client called 'stop'"))
-                    }
-                }.launchIn(this)
-                stream.onCompletion { println("On completion") }.collect { payload: Payload ->
-                    val data = payload.data.readText()
-                    println("Received payload: '$data'")
-                    delay(200)
-                    send("Received payload: '$data'")
-                }
-//                rSocket.requestStream(buildPayload { data("Hello") }).onEach { payload ->
-//                    val data = payload.data.readText()
-//                    println("Received payload: '$data'")
-//                    Thread.sleep(500)
-//                    send("Received payload: '$data'")
-//                }
-            }
+            requestStream(client)
+            requestChannel(client)
+            requestResponse(client)
         }
-//        routing {
-//            webSocket("ping") {
-//                val rSocket: RSocket = client.rSocket(path = "ping", port = 9000)
-//
-//                var stopped = false
-//
-//                val outbound = flow<Payload> {
-//                    incoming.receiveAsFlow().onEach { frame ->
-//                        println("Received frame: $frame")
-//                        if (frame is Frame.Text && frame.readText() == "stop") {
-//                            println("Stop requested, cancelling socket")
-////                            emitOrClose(buildPayload { data("stop") })
-////                            rSocket.cancel()
-//                            this@webSocket.close(CloseReason(CloseReason.Codes.NORMAL, "Client called 'stop'"))
-//                        }
-//                    }.launchIn(this@webSocket)
-//                }
-//
-////                val outbound = flow {
-////                    emitOrClose(buildPayload { data("stop") })
-////                }
-//
-//                val stream: Flow<Payload> = rSocket.requestChannel(buildPayload { data("Hello") }, outbound)
-//                stream.onCompletion { println("On completion") }.collect { payload: Payload ->
-//                    val data = payload.data.readText()
-//                    println("Received payload: '$data'")
-//                    delay(200)
-//                    send("Received payload: '$data'")
-//                }
-//            }
-//        }
     }.start(wait = true)
 }
 
+fun Routing.requestStream(client: HttpClient) {
+    webSocket("requestStream") { // configure route 'localhost:9000/rsocket'
+        val rSocket: RSocket = client.rSocket(path = "requestStream", port = 9000) // request stream
+        val stream: Flow<Payload> = rSocket.requestStream(buildPayload { data("Hello") }) // collect stream
+        // Seems to apply back pressure when used in conjunction with the rsocket receiving it
+        // Disconnecting the websocket also terminates the rsocket port and therefore stops the backend
+        // from emitting data
+        incoming.receiveAsFlow().onEach { frame ->
+            log.info("Received frame: $frame")
+            if (frame is Frame.Text && frame.readText() == "stop") {
+                log.info("Stop requested, cancelling socket")
+                // DO NOT CALL CANCEL ON THE RSOCKET OR IT WILL NOT ACTUALLY CANCEL THE OTHER SIDE OF THE SOCKET
+                // it sends a close/cancel event when the web socket itself is closed
+                // [DefaultWebSocketSessionImpl.runOutgoingProcessor] cancels all coroutines created within the [webSocket] scope
+                // this includes the stream returned by [requestStream]
+                // the flow returned from [requestStream] will then send a close if it is cancelled to the other side of the socket
+                this@webSocket.close(CloseReason(CloseReason.Codes.NORMAL, "Client called 'stop'"))
+            }
+        }.launchIn(this) // `launchIn` is needed to start the flow in a new coroutine (basically a new thread) so that it does not
+        // block the rest of the code, like it would if `collect` was called
+        stream.onCompletion {
+            log.info("Completed", it)
+//            rSocket.cancel("Client called 'stop'")
+        }.collect { payload: Payload ->
+            val data = payload.data.readText()
+            log.info("Received payload: '$data'")
+            delay(500)
+            send("Received payload: '$data'")
+        }
+    }
+}
+
+fun Routing.requestChannel(client: HttpClient) {
+    webSocket("requestChannel") { // configure route 'localhost:9000/rsocket'
+        val rSocket: RSocket = client.rSocket(path = "requestChannel", port = 9000) // request channel
+        val payloads: Flow<Payload> = incoming.receiveAsFlow().transform { frame ->
+            if (frame is Frame.Text) {
+                val text = frame.readText()
+                log.info("Received text: $text")
+                if (text == "stop") {
+                    log.info("Stop requested, cancelling socket")
+                    this@webSocket.close(CloseReason(CloseReason.Codes.NORMAL, "Client called 'stop'"))
+                } else {
+                    emitOrClose(buildPayload { data(text) })
+                }
+            }
+        }
+
+        val stream: Flow<Payload> = rSocket.requestChannel(buildPayload { data("Hello") }, payloads)
+
+        stream.onCompletion { log.info("Completed") }.collect { payload: Payload ->
+            val data = payload.data.readText()
+            log.info("Received payload: '$data'")
+            delay(500)
+            send("Received payload: '$data'")
+        }
+    }
+}
+
+fun Routing.requestResponse(client: HttpClient) {
+    get("requestResponse") {
+        val rSocket: RSocket = client.rSocket(path = "requestResponse", port = 9000) // request stream
+        val response: Payload = rSocket.requestResponse(buildPayload { data("Hello") })
+        val text = response.data.readText()
+
+        log.info("Received response from backend: '$text'")
+
+        call.respondText { text }
+    }
+}
