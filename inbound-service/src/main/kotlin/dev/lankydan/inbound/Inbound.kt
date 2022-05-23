@@ -23,7 +23,6 @@ import io.rsocket.kotlin.payload.buildPayload
 import io.rsocket.kotlin.payload.data
 import io.rsocket.kotlin.transport.ktor.client.RSocketSupport
 import io.rsocket.kotlin.transport.ktor.client.rSocket
-import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
@@ -36,7 +35,6 @@ import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger("Inbound")
 
-@InternalCoroutinesApi
 fun main() {
 
     val client = HttpClient { //create and configure ktor client
@@ -48,15 +46,38 @@ fun main() {
     embeddedServer(Netty, port = 8000) { // create and configure ktor server and start it on localhost:9000
         install(io.ktor.websocket.WebSockets)
         routing {
+            fireAndForget(client)
+            requestResponse(client)
             requestStream(client)
             requestChannel(client)
-            requestResponse(client)
-            fireAndForget(client)
         }
     }.start(wait = true)
 }
 
-fun Routing.requestStream(client: HttpClient) {
+private fun Routing.fireAndForget(client: HttpClient) {
+    get("fireAndForget") {
+        val rSocket: RSocket = client.rSocket(path = "fireAndForget", port = 9000) // request stream
+        rSocket.fireAndForget(buildPayload { data("Hello") })
+
+        log.info("Completed fire and forget request")
+
+        call.respondText { "Completed" }
+    }
+}
+
+private fun Routing.requestResponse(client: HttpClient) {
+    get("requestResponse") {
+        val rSocket: RSocket = client.rSocket(path = "requestResponse", port = 9000) // request stream
+        val response: Payload = rSocket.requestResponse(buildPayload { data("Hello") })
+        val text = response.data.readText()
+
+        log.info("Received response from backend: '$text'")
+
+        call.respondText { text }
+    }
+}
+
+private fun Routing.requestStream(client: HttpClient) {
     webSocket("requestStream") { // configure route 'localhost:9000/rsocket'
         val rSocket: RSocket = client.rSocket(path = "requestStream", port = 9000) // request stream
         val stream: Flow<Payload> = rSocket.requestStream(buildPayload { data("Hello") }) // collect stream
@@ -87,7 +108,7 @@ fun Routing.requestStream(client: HttpClient) {
     }
 }
 
-fun Routing.requestChannel(client: HttpClient) {
+private fun Routing.requestChannel(client: HttpClient) {
     webSocket("requestChannel") { // configure route 'localhost:9000/rsocket'
         val rSocket: RSocket = client.rSocket(path = "requestChannel", port = 9000) // request channel
         val payloads: Flow<Payload> = incoming.receiveAsFlow().transform { frame ->
@@ -113,28 +134,5 @@ fun Routing.requestChannel(client: HttpClient) {
             delay(500)
             send("Received payload: '$data'")
         }
-    }
-}
-
-fun Routing.requestResponse(client: HttpClient) {
-    get("requestResponse") {
-        val rSocket: RSocket = client.rSocket(path = "requestResponse", port = 9000) // request stream
-        val response: Payload = rSocket.requestResponse(buildPayload { data("Hello") })
-        val text = response.data.readText()
-
-        log.info("Received response from backend: '$text'")
-
-        call.respondText { text }
-    }
-}
-
-fun Routing.fireAndForget(client: HttpClient) {
-    get("fireAndForget") {
-        val rSocket: RSocket = client.rSocket(path = "fireAndForget", port = 9000) // request stream
-        rSocket.fireAndForget(buildPayload { data("Hello") })
-
-        log.info("Completed fire and forget request")
-
-        call.respondText { "Completed" }
     }
 }

@@ -33,12 +33,36 @@ fun main() {
         // web sockets must be installed first or it throws an error
         install(RSocketSupport)
         routing {
+            fireAndForget()
+            requestResponse()
             requestSteam()
             requestChannel()
-            requestResponse()
-            fireAndForget()
         }
     }.start(wait = true)
+}
+
+private fun Routing.fireAndForget() {
+    rSocket("fireAndForget") {
+        RSocketRequestHandler {
+            fireAndForget { request: Payload ->
+                val text = request.data.readText()
+                log.info("Received request (fire and forget): '$text' ")
+            }
+        }
+    }
+}
+
+private fun Routing.requestResponse() {
+    rSocket("requestResponse") {
+        RSocketRequestHandler {
+            requestResponse { request: Payload ->
+                val text = request.data.readText()
+                log.info("Received request (request/response): '$text' ")
+                delay(200)
+                buildPayload { data("Received: '$text' - Returning: 'some data'") }
+            }
+        }
+    }
 }
 
 // seems like this doesn't cancel properly, since after shutting down the inbound application, the backend app threw a connection error
@@ -89,30 +113,6 @@ private fun Routing.requestChannel() {
                         currentCoroutineContext().cancel()
                     }
                 }
-            }
-        }
-    }
-}
-
-private fun Routing.requestResponse() {
-    rSocket("requestResponse") {
-        RSocketRequestHandler {
-            requestResponse { request: Payload ->
-                val text = request.data.readText()
-                log.info("Received request (request/response): '$text' ")
-                delay(200)
-                buildPayload { data("Received: '$text' - Returning: 'some data'") }
-            }
-        }
-    }
-}
-
-private fun Routing.fireAndForget() {
-    rSocket("fireAndForget") {
-        RSocketRequestHandler {
-            fireAndForget { request: Payload ->
-                val text = request.data.readText()
-                log.info("Received request (fire and forget): '$text' ")
             }
         }
     }
