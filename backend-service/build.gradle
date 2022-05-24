@@ -8,18 +8,18 @@ repositories {
 }
 
 dependencies {
-    implementation("io.rsocket.kotlin:rsocket-core:0.14.3")
+    implementation("io.rsocket.kotlin:rsocket-core:0.15.4")
 
     // TCP ktor transport
-    implementation("io.rsocket.kotlin:rsocket-transport-ktor:0.14.3")
+//    implementation("io.rsocket.kotlin:rsocket-transport-ktor:0.15.4")
 
     // WS ktor transport client plugin
-    implementation("io.rsocket.kotlin:rsocket-transport-ktor-client:0.14.3")
+    implementation("io.rsocket.kotlin:rsocket-ktor-client:0.15.4")
 
     // WS ktor transport server plugin
-    implementation("io.rsocket.kotlin:rsocket-transport-ktor-server:0.14.3")
+    implementation("io.rsocket.kotlin:rsocket-ktor-server:0.15.4")
 
-    implementation("io.ktor:ktor-server-netty:1.6.7")
+    implementation("io.ktor:ktor-server-netty:2.0.1")
 
     implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.2.11'
 }
